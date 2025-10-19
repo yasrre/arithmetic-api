@@ -41,7 +41,7 @@ def divide():
     if not isinstance(num1, (int, float)) or not isinstance(num2, (int, float)):
         return jsonify({"error": "Invalid input, please provide numbers."}), 400
     if num2 == 0:
-        return jsonify({"error": "Cannot divide by zero."}), 400
+        return jsonify({"error": "Cannot divide by zero u dummy."}), 400
     result = num1 / num2
     return jsonify({"result": result})
 
