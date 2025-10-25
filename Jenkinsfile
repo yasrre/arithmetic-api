@@ -1,5 +1,6 @@
 pipeline {
-    agent none // Global agent is disabled, we define agents per stage
+    // Disable the default agent globally as we use specialized agents per stage
+    agent none 
 
     environment {
         // --- Configuration Variables ---
@@ -7,16 +8,14 @@ pipeline {
         IMAGE_BASE_NAME = 'arithmetic-api'
         FULL_IMAGE_NAME = "${DOCKERHUB_USERNAME}/${IMAGE_BASE_NAME}"
         DOCKERHUB_CREDENTIALS_ID = 'docker-hub-credentials'
-        APP_DIR = 'api'
-        
-        // Define agents for specific tasks
-        PYTHON_AGENT_IMAGE = 'python:3.9-alpine' // For Python tasks
-        DIND_AGENT_IMAGE = 'docker:25-dind'      // For Docker CLI tasks (if needed, simplified below)
+        APP_DIR = 'api' // Subdirectory where your code resides
+        PYTHON_AGENT_IMAGE = 'python:3.9-alpine' // Minimal Python image for security tasks
     }
 
     stages {
         stage('Checkout Code') {
-            agent any // Use the base Jenkins agent for SCM checkout
+            // Use 'any' agent for Git checkout, as the host often has Git pre-installed
+            agent any 
             steps {
                 echo 'Checking out code from GitHub...'
                 checkout scm
@@ -24,23 +23,24 @@ pipeline {
         }
 
         stage('Security & Tests') {
-            // Use the Python image as an agent to run Python-based commands
+            // Use a Docker agent with Python installed to run pip, bandit, safety, and pytest
             agent {
                 docker {
                     image PYTHON_AGENT_IMAGE
-                    // Mount the entire workspace so the agent can access all files
+                    // Mount the workspace to share checked-out files with the container
+                    // -w sets the working directory inside the container
                     args "-v ${workspace}:/home/jenkins/workspace -w /home/jenkins/workspace/${JOB_NAME}"
                 }
             }
             steps {
                 script {
-                    echo 'Installing security dependencies inside Python agent...'
-                    // Install core dependencies + security tools globally inside the Python agent
+                    echo 'Installing dependencies and security tools inside Python agent...'
+                    // Install all required tools globally inside the temporary Python container
                     sh "pip install -r ${APP_DIR}/requirements.txt bandit safety pytest"
 
                     // --- SAST (Bandit) ---
                     echo 'Running Bandit SAST scan...'
-                    sh "bandit -r ${APP_DIR} -ll -x ${APP_DIR}/test_app.py || true" // || true allows pipeline to proceed
+                    sh "bandit -r ${APP_DIR} -ll -x ${APP_DIR}/test_app.py || true"
 
                     // --- SCA (Safety) ---
                     echo 'Running Safety SCA check...'
@@ -54,11 +54,8 @@ pipeline {
         }
         
         stage('Build & Image Scan (Trivy)') {
-            // Use the base Jenkins agent but grant it Docker CLI access via mounting the socket
-            agent {
-                label 'jenkins' // Assuming 'jenkins' is the label of your main host agent
-                args '-v /var/run/docker.sock:/var/run/docker.sock'
-            }
+            // Use the standard Jenkins agent to run Docker commands available on the host VM
+            agent any 
             steps {
                 script {
                     echo 'Building Docker image and tagging for Trivy scan...'
@@ -66,7 +63,7 @@ pipeline {
                     // 1. Build the Docker image, tagging it with the unique build number
                     sh "docker build -t ${FULL_IMAGE_NAME}:${env.BUILD_NUMBER} -f ${APP_DIR}/Dockerfile ${APP_DIR}"
 
-                    // 2. Scan the built image using the Trivy CLI (Trivy must be installed on the Jenkins host/VM)
+                    // 2. Scan the built image using Trivy (requires Trivy CLI on the Jenkins host/VM)
                     echo 'Scanning image with Trivy (Failing on HIGH or CRITICAL issues)...'
                     sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${FULL_IMAGE_NAME}:${env.BUILD_NUMBER}"
                     
@@ -95,7 +92,7 @@ pipeline {
             agent any
             steps {
                 echo 'Deploying application container using Docker Compose...'
-                // Use the updated docker-compose.yml to pull and run the latest pushed image
+                // This relies on docker-compose.yml pointing to the correct image name
                 sh 'docker-compose up -d'
             }
         }
@@ -105,12 +102,14 @@ pipeline {
         always {
             // Clean up the workspace
             cleanWs()
+            // Optional: Clean up Docker artifacts (requires Docker CLI, but useful)
+            sh 'docker system prune -f || true' 
         }
         success {
-            echo 'SUCCESS! CI/CD Pipeline finished. New image available on Docker Hub.'
+            echo 'SUCCESS! CI/CD Pipeline finished. New image available on Docker Hub and deployed.'
         }
         failure {
-            echo 'FAILURE! Check console output. Failed at security, test, or build stage.'
+            echo 'FAILURE! Review the console output for security, test, or build stage failures.'
         }
     }
 }
