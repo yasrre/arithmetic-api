@@ -1,5 +1,5 @@
 pipeline {
-    // Disable the default agent globally as we use specialized agents per stage
+    // Agent none requires explicit agent definition in all stages that run shell commands
     agent none 
 
     environment {
@@ -9,12 +9,12 @@ pipeline {
         FULL_IMAGE_NAME = "${DOCKERHUB_USERNAME}/${IMAGE_BASE_NAME}"
         DOCKERHUB_CREDENTIALS_ID = 'docker-hub-credentials'
         APP_DIR = 'api' // Subdirectory where your code resides
-        PYTHON_AGENT_IMAGE = 'python:3.9-alpine' // Minimal Python image for security tasks
+        PYTHON_AGENT_IMAGE = 'python:3.9-alpine' 
     }
 
     stages {
         stage('Checkout Code') {
-            // Use 'any' agent for Git checkout, as the host often has Git pre-installed
+            // Use 'agent any' to define the workspace context needed by later stages
             agent any 
             steps {
                 echo 'Checking out code from GitHub...'
@@ -23,12 +23,11 @@ pipeline {
         }
 
         stage('Security & Tests') {
-            // Use a Docker agent with Python installed to run pip, bandit, safety, and pytest
+            // Run tests and security scans inside a Python container agent
             agent {
                 docker {
                     image PYTHON_AGENT_IMAGE
-                    // Mount the workspace to share checked-out files with the container
-                    // -w sets the working directory inside the container
+                    // Mounting the workspace is crucial for the container to access checked-out files
                     args "-v ${workspace}:/home/jenkins/workspace -w /home/jenkins/workspace/${JOB_NAME}"
                 }
             }
@@ -54,7 +53,7 @@ pipeline {
         }
         
         stage('Build & Image Scan (Trivy)') {
-            // Use the standard Jenkins agent to run Docker commands available on the host VM
+            // Run on the standard Jenkins agent, relying on host Docker/Trivy CLI access
             agent any 
             steps {
                 script {
@@ -63,7 +62,7 @@ pipeline {
                     // 1. Build the Docker image, tagging it with the unique build number
                     sh "docker build -t ${FULL_IMAGE_NAME}:${env.BUILD_NUMBER} -f ${APP_DIR}/Dockerfile ${APP_DIR}"
 
-                    // 2. Scan the built image using Trivy (requires Trivy CLI on the Jenkins host/VM)
+                    // 2. Scan the built image using Trivy
                     echo 'Scanning image with Trivy (Failing on HIGH or CRITICAL issues)...'
                     sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${FULL_IMAGE_NAME}:${env.BUILD_NUMBER}"
                     
@@ -100,10 +99,13 @@ pipeline {
 
     post {
         always {
+            // The workspace is needed for cleanup, so agent any is implied or required
+            agent any 
             // Clean up the workspace
             cleanWs()
-            // Optional: Clean up Docker artifacts (requires Docker CLI, but useful)
+            // Cleanup Docker artifacts
             sh 'docker system prune -f || true' 
+            // Note: If you don't have 'docker' installed on the host, this command will still fail silently due to '|| true'.
         }
         success {
             echo 'SUCCESS! CI/CD Pipeline finished. New image available on Docker Hub and deployed.'
