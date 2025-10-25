@@ -2,9 +2,8 @@ version: '3.8'
 services:
   web:
 
-    build: .
+    image: yassineokr/arithmetic-api:latest
     container_name: python_devsecops_app
-
     ports:
       - "8000:5000"
 
