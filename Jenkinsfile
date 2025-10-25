@@ -14,7 +14,7 @@ pipeline {
 
     stages {
         stage('Checkout Code') {
-            // Use 'agent any' to define the workspace context needed by later stages
+            // This stage MUST define the workspace context by using a valid agent
             agent any 
             steps {
                 echo 'Checking out code from GitHub...'
@@ -24,17 +24,17 @@ pipeline {
 
         stage('Security & Tests') {
             // Run tests and security scans inside a Python container agent
+            // The Docker Pipeline plugin will now handle workspace mapping automatically
             agent {
                 docker {
                     image PYTHON_AGENT_IMAGE
-                    // Mounting the workspace is crucial for the container to access checked-out files
-                    args "-v ${workspace}:/home/jenkins/workspace -w /home/jenkins/workspace/${JOB_NAME}"
+                    // NOTE: The 'args' line that used ${workspace} has been removed.
                 }
             }
             steps {
                 script {
                     echo 'Installing dependencies and security tools inside Python agent...'
-                    // Install all required tools globally inside the temporary Python container
+                    // The paths are relative to the workspace, which is automatically mapped inside the Docker container
                     sh "pip install -r ${APP_DIR}/requirements.txt bandit safety pytest"
 
                     // --- SAST (Bandit) ---
@@ -59,14 +59,14 @@ pipeline {
                 script {
                     echo 'Building Docker image and tagging for Trivy scan...'
                     
-                    // 1. Build the Docker image, tagging it with the unique build number
+                    // Build the Docker image, tagging it with the unique build number
                     sh "docker build -t ${FULL_IMAGE_NAME}:${env.BUILD_NUMBER} -f ${APP_DIR}/Dockerfile ${APP_DIR}"
 
-                    // 2. Scan the built image using Trivy
+                    // Scan the built image using Trivy
                     echo 'Scanning image with Trivy (Failing on HIGH or CRITICAL issues)...'
                     sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${FULL_IMAGE_NAME}:${env.BUILD_NUMBER}"
                     
-                    // 3. Tag the image as 'latest'
+                    // Tag the image as 'latest'
                     sh "docker tag ${FULL_IMAGE_NAME}:${env.BUILD_NUMBER} ${FULL_IMAGE_NAME}:latest"
                 }
             }
@@ -99,11 +99,10 @@ pipeline {
 
     post {
         always {
-            // Clean up the workspace
+            // cleanWs is the only step in post that requires a node context.
             cleanWs()
             // Cleanup Docker artifacts
             sh 'docker system prune -f || true' 
-            // Note: If you don't have 'docker' installed on the host, this command will still fail silently due to '|| true'.
         }
         success {
             echo 'SUCCESS! CI/CD Pipeline finished. New image available on Docker Hub and deployed.'
