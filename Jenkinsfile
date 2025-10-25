@@ -99,8 +99,6 @@ pipeline {
 
     post {
         always {
-            // The workspace is needed for cleanup, so agent any is implied or required
-            agent any 
             // Clean up the workspace
             cleanWs()
             // Cleanup Docker artifacts
