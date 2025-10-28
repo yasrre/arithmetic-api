@@ -1,5 +1,5 @@
 pipeline {
-    agent any // Run all stages on the Jenkins host VM, which has access to the Docker socket
+    agent any // Run all stages on the Jenkins host VM
 
     environment {
         // --- Configuration Variables ---
@@ -8,12 +8,6 @@ pipeline {
         FULL_IMAGE_NAME = "${DOCKERHUB_USERNAME}/${IMAGE_BASE_NAME}"
         DOCKERHUB_CREDENTIALS_ID = 'docker-hub-credentials'
         APP_DIR = 'api' 
-        
-        // Define the non-standard install path for pip tools
-        JENKINS_LOCAL_BIN = '/var/lib/jenkins/.local/bin' 
-        
-        // Update PATH to include the local bin directory where pip installs executables
-        PATH = "${JENKINS_LOCAL_BIN}:${env.PATH}"
     }
 
     stages {
@@ -24,17 +18,15 @@ pipeline {
             }
         }
         
-        // This stage now relies entirely on the host VM's PATH being fixed
         stage('Security, Tests & Build') {
             steps {
                 script {
-                    echo 'Installing required Python tools globally (fixing PATH issue)...'
-                    // The --break-system-packages flag forces installation on Kali/Debian host
+                    echo 'Installing required Python tools globally (fixing environment)...'
+                    // Fix 1: Use --break-system-packages to override Kali/Debian protection
                     sh "pip install --break-system-packages -r ${APP_DIR}/requirements.txt bandit safety pytest"
                     
                     // --- SAST (Bandit) ---
                     echo 'Running Bandit SAST scan...'
-                    // We must use the executable found in the custom PATH
                     sh "bandit -r ${APP_DIR} -ll -x ${APP_DIR}/test_app.py || true"
 
                     // --- SCA (Safety) ---
@@ -47,11 +39,10 @@ pipeline {
                     
                     // --- Build & Trivy Scan ---
                     echo 'Building Docker image and tagging for Trivy scan...'
-                    // Fix: Use the Dockerfile from the root context '.'
+                    // Fix 2: Use the Dockerfile from the root (Dockerfile) and set context to root (.)
                     sh "docker build -t ${FULL_IMAGE_NAME}:${env.BUILD_NUMBER} -f Dockerfile ."
                     
                     echo 'Scanning image with Trivy (Failing on HIGH or CRITICAL issues)...'
-                    // Trivy is assumed to be installed on the host VM and in the PATH
                     sh "trivy image --exit-code 1 --severity HIGH,CRITICAL ${FULL_IMAGE_NAME}:${env.BUILD_NUMBER}"
                     
                     sh "docker tag ${FULL_IMAGE_NAME}:${env.BUILD_NUMBER} ${FULL_IMAGE_NAME}:latest"
@@ -72,8 +63,14 @@ pipeline {
         
         stage('Deploy Application') {
             steps {
-                echo 'Deploying application container using Docker Compose...'
-                sh 'docker-compose up -d'
+                script {
+                    // FIX 3: Clean up previous container instance before deploying
+                    echo 'Cleaning up old container and deploying new image...'
+                    sh 'docker-compose down || true' 
+                    
+                    // Deploy the application
+                    sh 'docker-compose up -d'
+                }
             }
         }
     }
@@ -81,7 +78,7 @@ pipeline {
     post {
         always {
             cleanWs()
-            // Cleanup Docker containers/images
+            // Cleanup Docker artifacts
             sh 'docker system prune -f || true' 
         }
         success {
