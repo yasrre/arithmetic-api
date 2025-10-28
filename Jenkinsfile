@@ -7,7 +7,7 @@ pipeline {
         IMAGE_BASE_NAME = 'arithmetic-api'
         FULL_IMAGE_NAME = "${DOCKERHUB_USERNAME}/${IMAGE_BASE_NAME}"
         DOCKERHUB_CREDENTIALS_ID = 'docker-hub-credentials'
-        APP_DIR = 'api' // Subdirectory where your code resides
+        APP_DIR = 'api'
     }
 
     stages {
@@ -24,7 +24,7 @@ pipeline {
                 script {
                     echo 'Installing required Python tools globally (assuming host environment)...'
                     // Rely on host's Python or ensure these packages are installed globally on the VM
-                    sh "pip install -r ${APP_DIR}/requirements.txt bandit safety pytest"
+                    sh "pip install --break-system-packages -r ${APP_DIR}/requirements.txt bandit safety pytest"
                     
                     // --- SAST (Bandit) ---
                     echo 'Running Bandit SAST scan...'
